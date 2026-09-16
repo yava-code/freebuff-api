@@ -1,0 +1,28 @@
+{
+  "name": "freebuff-api",
+  "version": "1.0.0",
+  "description": "One command: expose your local Freebuff Desktop login as an OpenAI-compatible API endpoint (127.0.0.1). Finds your token, prints it, and serves /v1/models + /v1/chat/completions via the official @codebuff/sdk.",
+  "license": "MIT",
+  "type": "commonjs",
+  "main": "cli.js",
+  "bin": {
+    "freebuff-api": "cli.js"
+  },
+  "files": [
+    "cli.js",
+    "lib",
+    "test",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "start": "node cli.js",
+    "test": "node test/run-tests.js"
+  },
+  "dependencies": {
+    "@codebuff/sdk": "^0.10.7"
+  }
+}
