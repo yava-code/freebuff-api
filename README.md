@@ -44,6 +44,24 @@ print(client.chat.completions.create(
 
 The bridge **never installs anything into the Freebuff app folder** (app updates overwrite that folder). It only ever *reads* your token from a stable per-user config path at every start — so app updates, re-installs and re-logins all keep working. If Freebuff adds or renames models, just update the small catalog in `lib/models.js` (or send a PR).
 
+## Free mode via the official CLI
+
+With the official Freebuff CLI installed once (`npm install -g freebuff`), the bridge runs every request through it — the genuine client the backend grants free-mode inference to, so **0 credits** are spent:
+
+1. The CLI's TUI is driven like a user would (stdin: Enter → prompt → Enter). No headers are forged.
+2. The CLI itself writes the transcript to disk; the bridge reads the assistant's reply from there.
+3. Requests are queued (one TUI at a time); a request takes ~30–60 s end-to-end.
+
+Backend selection via `FREEBUFF_API_BACKEND`:
+
+| Value | Behavior |
+|---|---|
+| `auto` (default) | CLI if installed (free), per-request fallback to the SDK |
+| `cli` | CLI only — free mode, 0 credits |
+| `sdk` | SDK only — bills credits, honest `402` without them |
+
+Failed CLI runs (TUI races, timeouts) transparently fall back to the SDK in `auto` mode and are reported via `freebuff.cliFallbackReason` in the response.
+
 ## Honest billing note
 
 Free-mode inference on the Freebuff backend is restricted to its official clients. This bridge therefore goes through the **official `@codebuff/sdk`** with your own token: each request runs a tiny chat agent pinned to the model you requested, and bills against your account credits. Without credits the backend answers `402`, and the bridge returns a clear OpenAI-style error (no workaround hacks — the backend explicitly warns about bans for header spoofing). Inside the official Freebuff app, free mode keeps working as usual.
@@ -76,6 +94,24 @@ npx github:yava-code/freebuff-api
 ## Почему обновления приложения не страшны
 
 Мост **ничего не устанавливает в папку приложения** (её затирают обновления). Он только *читает* токен из стабильного пути в профиле пользователя при каждом запуске — поэтому обновления, переустановка и перелогин не ломают его. Новые модели Freebuff добавляются правкой одного файла `lib/models.js`.
+
+## Бесплатный режим через официальный CLI
+
+Достаточно один раз поставить официальный CLI Freebuff (`npm install -g freebuff`) — и мост прогоняет каждый запрос через него, подлинный клиент, которому бэкенд разрешает бесплатный режим. **0 кредитов.**
+
+1. TUI CLI управляется как живым пользователем (stdin: Enter → промпт → Enter). Заголовки не подделываются.
+2. CLI сам пишет транскрипт диалога на диск; мост забирает ответ ассистента оттуда.
+3. Запросы выстраиваются в очередь (один TUI за раз); запрос занимает ~30–60 с.
+
+Выбор бэкенда через `FREEBUFF_API_BACKEND`:
+
+| Значение | Поведение |
+|---|---|
+| `auto` (по умолчанию) | CLI, если установлен (бесплатно), с фолбэком на SDK |
+| `cli` | только CLI — бесплатный режим, 0 кредитов |
+| `sdk` | только SDK — списывает кредиты, честный `402` без них |
+
+Неудачный прогон CLI (гонки TUI, таймаут) в режиме `auto` прозрачно падает на SDK, причина видна в ответе в `freebuff.cliFallbackReason`.
 
 ## Честно про оплату
 

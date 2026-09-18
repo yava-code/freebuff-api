@@ -57,6 +57,11 @@ async function main() {
   if (args.has('--help') || args.has('-h')) {
     console.log('Usage: freebuff-api [--port N]');
     console.log('  --port N   port to listen on (default ' + DEFAULT_PORT + ', env FREEBUFF_API_PORT)');
+    console.log('');
+    console.log('  Backends (env FREEBUFF_API_BACKEND):');
+    console.log('    auto (default)  official Freebuff CLI if installed (free mode), else SDK');
+    console.log('    cli             official CLI only — free mode, 0 credits, needs `npm i -g freebuff`');
+    console.log('    sdk             @codebuff/sdk only — bills account credits (402 without them)');
     process.exit(0);
   }
 
@@ -76,6 +81,14 @@ async function main() {
   }
 
   printFound(found);
+
+  const backend = require('./lib/server').pickBackend();
+  console.log('');
+  console.log('  Backend: ' + backend.primary + (backend.fallback ? ' (fallback: ' + backend.fallback + ')' : ''));
+  if (backend.primary === 'sdk' && backend.fallback !== 'cli') {
+    console.log('           Official CLI not detected — requests bill against credits (402 without).');
+    console.log('           Install it once for free mode:  npm install -g freebuff');
+  }
 
   const port = DEFAULT_PORT;
   const server = createServer({ token: found.token });

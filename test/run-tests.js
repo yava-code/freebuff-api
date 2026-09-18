@@ -7,10 +7,15 @@
 
 const assert = require('assert');
 const http = require('http');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
 const { createServer } = require('../lib/server');
 const { resolveModel, DEFAULT_MODEL } = require('../lib/models');
 const { messagesToPrompt, systemFromMessages, normalizeErrorStatus, friendlyHint } = require('../lib/sdk-bridge');
 const { findToken, maskToken } = require('../lib/find-token');
+const { runChat: cliRunChat, messageText, looksLikeAssistant, pickerModel, CLI_MODELS } = require('../lib/cli-bridge');
+const { pickBackend, routeRunChat } = require('../lib/server');
 
 let portCounter = 18800;
 function nextPort() { return ++portCounter; }
@@ -314,6 +319,177 @@ test('findToken: env override wins; maskToken keeps ends', () => {
   assert.ok(masked.startsWith('test-k'));
   assert.ok(masked.endsWith('7890'));
   assert.ok(!masked.includes('123456789'));
+});
+
+/* ---------------------------------------------- cli-bridge unit tests -- */
+
+test('cli-bridge: messageText extracts content/blocks/reasoning-filter', () => {
+  assert.strictEqual(messageText({ variant: 'ai', content: 'hi' }), 'hi');
+  assert.strictEqual(messageText({ variant: 'ai', content: [{ type: 'text', text: 'a' }] }), 'a');
+  assert.strictEqual(
+    messageText({ variant: 'ai', blocks: [
+      { type: 'text', content: 'thinking...', textType: 'reasoning' },
+      { type: 'text', content: 'answer', textType: 'text' },
+    ] }),
+    'answer',
+  );
+  assert.strictEqual(messageText({ variant: 'ai', parts: [{ type: 'text', content: 'x' }] }), 'x');
+  assert.strictEqual(messageText(null), '');
+});
+
+test('cli-bridge: looksLikeAssistant accepts variant:ai and role forms', () => {
+  assert.ok(looksLikeAssistant({ variant: 'ai' }));
+  assert.ok(looksLikeAssistant({ role: 'assistant' }));
+  assert.ok(looksLikeAssistant({ type: 'ASSISTANT' }));
+  assert.ok(!looksLikeAssistant({ variant: 'user' }));
+  assert.ok(!looksLikeAssistant(null));
+});
+
+test('cli-bridge: pickerModel maps known ids, defaults unknown to GLM flash', () => {
+  assert.strictEqual(pickerModel('z-ai/glm-5.3-flash'), 'z-ai/glm-5.3-flash');
+  assert.strictEqual(pickerModel('deepseek/deepseek-v4-flash'), 'deepseek/deepseek-v4-flash');
+  assert.strictEqual(pickerModel('no/such-model'), 'z-ai/glm-5.3-flash');
+  assert.ok(CLI_MODELS.length >= 4);
+});
+
+test('cli-bridge: happy path via fake TUI (transcript file is read)', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fbcli-test-'));
+  const calls = [];
+  const { EventEmitter } = require('events');
+  // The fake CLI mirrors the real one: transcript under
+  // <configDir>/projects/<basename(cwd)>/chats/<ts>/chat-messages.json.
+  const fakeSpawn = (bin, args, opts) => {
+    const chatsDir = path.join(dir, 'config', 'projects', path.basename(opts.cwd), 'chats');
+    const child = new EventEmitter();
+    child.stdin = new EventEmitter();
+    child.stdin.write = (s) => calls.push(s);
+    child.stderr = new EventEmitter();
+    setTimeout(() => {
+      fs.mkdirSync(chatsDir, { recursive: true });
+      const chatDir = path.join(chatsDir, '2026-01-01_00-00-00');
+      fs.mkdirSync(chatDir, { recursive: true });
+      fs.writeFileSync(path.join(chatDir, 'chat-messages.json'), JSON.stringify([
+        { id: 'divider-1', variant: 'ai', content: '', blocks: [{ type: 'mode-divider', mode: 'LITE' }] },
+        { id: 'user-1', variant: 'user', content: 'hi' },
+        { id: 'ai-1', variant: 'ai', content: '', blocks: [
+          { type: 'text', content: 'hidden thoughts', textType: 'reasoning' },
+          { type: 'text', content: 'PONG', textType: 'text' },
+        ] },
+      ]));
+    }, 100);
+    return child;
+  };
+  const fastSleep = (ms) => new Promise((r) => setTimeout(r, Math.min(ms, 20)));
+  const out = await cliRunChat({
+    model: 'z-ai/glm-5.3-flash',
+    prompt: 'hi',
+    timeoutMs: 15000,
+    deps: {
+      spawnFn: fakeSpawn,
+      sleepFn: fastSleep,
+      findBinFn: () => 'fake-freebuff.exe',
+      configDir: path.join(dir, 'config'),
+    },
+  });
+  assert.strictEqual(out.text, 'PONG');
+  assert.strictEqual(out.via, 'cli');
+  // TUI was driven: Enter, submit...
+  assert.ok(calls.includes('\r'));
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('cli-bridge: missing binary -> 503 with install hint', async () => {
+  const err = await cliRunChat({
+    model: 'z-ai/glm-5.3-flash',
+    prompt: 'hi',
+    deps: { findBinFn: () => null },
+  }).catch((e) => e);
+  assert.strictEqual(err.status, 503);
+  assert.ok(err.hint.includes('FREEBUFF_API_BACKEND'));
+});
+
+test('cli-bridge: timeout -> 504 and TUI teardown keystrokes sent', async () => {
+  const calls = [];
+  const { EventEmitter } = require('events');
+  const child = new EventEmitter();
+  child.stdin = new EventEmitter();
+  child.stdin.write = (s) => calls.push(s);
+  child.stderr = new EventEmitter();
+  const err = await cliRunChat({
+    model: 'z-ai/glm-5.3-flash',
+    prompt: 'hi',
+    timeoutMs: 300,
+    deps: {
+      spawnFn: () => child,
+      sleepFn: (ms) => new Promise((r) => setTimeout(r, Math.min(ms, 20))),
+      findBinFn: () => 'fake-freebuff.exe',
+      configDir: path.join(os.tmpdir(), 'fbcli-nowhere-' + Date.now()),
+    },
+  }).catch((e) => e);
+  assert.strictEqual(err.status, 504);
+  assert.ok(calls.includes('\x03'), 'Ctrl+C teardown');
+});
+
+/* --------------------------------------------------- backend routing -- */
+
+test('routing: system prompt prepended to CLI prompt', async () => {
+  let seen = null;
+  const out = await routeRunChat(
+    { messages: [{ role: 'system', content: 'Be terse.' }, { role: 'user', content: 'hi' }], model: 'm' },
+    { primary: 'cli', fallback: 'sdk' },
+    { cliRunChat: async (o) => { seen = o; return { text: 'ok', via: 'cli' }; }, sdkRunChat: async () => { throw new Error('SDK must not run'); } },
+  );
+  assert.strictEqual(out.backend, 'cli');
+  assert.ok(seen.prompt.startsWith('Be terse.\n\n---\n\nhi'));
+});
+
+test('routing: CLI failure in auto mode falls back to SDK with reason', async () => {
+  let sdkOpts = null;
+  const out = await routeRunChat(
+    { messages: [{ role: 'user', content: 'hi' }], model: 'm' },
+    { primary: 'cli', fallback: 'sdk' },
+    {
+      cliRunChat: async () => { throw Object.assign(new Error('CLI timed out'), { status: 504 }); },
+      sdkRunChat: async (o) => { sdkOpts = o; return { text: 'sdk-ok' }; },
+    },
+  );
+  assert.strictEqual(out.backend, 'sdk');
+  assert.strictEqual(out.cliFallbackReason, 'CLI timed out');
+  assert.strictEqual(sdkOpts.model, 'm');
+});
+
+test('routing: forced CLI (no fallback) rethrows backend error', async () => {
+  const err = await routeRunChat(
+    { messages: [{ role: 'user', content: 'hi' }], model: 'm' },
+    { primary: 'cli', fallback: null },
+    { cliRunChat: async () => { throw Object.assign(new Error('boom'), { status: 504 }); }, sdkRunChat: async () => { throw new Error('SDK must not run'); } },
+  ).catch((e) => e);
+  assert.strictEqual(err.message, 'boom');
+});
+
+test('routing: empty prompt -> 400 before any backend', async () => {
+  const err = await routeRunChat(
+    { messages: [{ role: 'system', content: 'only system' }], model: 'm' },
+    { primary: 'cli', fallback: 'sdk' },
+    { cliRunChat: async () => { throw new Error('CLI must not run'); }, sdkRunChat: async () => { throw new Error('SDK must not run'); } },
+  ).catch((e) => e);
+  assert.strictEqual(err.status, 400);
+});
+
+test('routing: pickBackend honors FREEBUFF_API_BACKEND', () => {
+  const prev = process.env.FREEBUFF_API_BACKEND;
+  try {
+    process.env.FREEBUFF_API_BACKEND = 'sdk';
+    assert.deepStrictEqual(pickBackend(), { primary: 'sdk', fallback: null });
+    process.env.FREEBUFF_API_BACKEND = 'cli';
+    assert.deepStrictEqual(pickBackend(), { primary: 'cli', fallback: null });
+    process.env.FREEBUFF_API_BACKEND = 'auto';
+    const auto = pickBackend();
+    assert.ok(auto.primary === 'cli' || auto.primary === 'sdk');
+    assert.strictEqual(auto.fallback, 'sdk');
+  } finally {
+    if (prev === undefined) delete process.env.FREEBUFF_API_BACKEND; else process.env.FREEBUFF_API_BACKEND = prev;
+  }
 });
 
 (async () => {
