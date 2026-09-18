@@ -4,6 +4,26 @@
   "description": "One command: expose your local Freebuff Desktop login as an OpenAI-compatible API endpoint (127.0.0.1). Finds your token, prints it, and serves /v1/models + /v1/chat/completions via the official @codebuff/sdk.",
   "license": "MIT",
   "type": "commonjs",
+  "keywords": [
+    "freebuff",
+    "codebuff",
+    "openai",
+    "openai-compatible",
+    "api",
+    "bridge",
+    "local",
+    "llm",
+    "chat",
+    "proxy"
+  ],
+  "homepage": "https://github.com/yava-code/freebuff-api#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/yava-code/freebuff-api.git"
+  },
+  "bugs": {
+    "url": "https://github.com/yava-code/freebuff-api/issues"
+  },
   "main": "cli.js",
   "bin": {
     "freebuff-api": "cli.js"

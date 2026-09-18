@@ -8,6 +8,8 @@ One command turns your local **Freebuff Desktop** login into an **OpenAI-compati
 npx github:yava-code/freebuff-api
 ```
 
+Requires only **Node.js 18+** — nothing else to install or configure.
+
 The script:
 
 1. **Finds your token** (never leaves your machine): `CODEBUFF_API_KEY` env → `FREEBUFF_DESKTOP_STATE_PATH` env → `~/.config/freebuff-desktop/state.json` → legacy `~/.codebuff/credentials.json`.
@@ -84,6 +86,8 @@ MIT licensed. Not affiliated with Codebuff/Freebuff.
 ```bash
 npx github:yava-code/freebuff-api
 ```
+
+Нужен только **Node.js 18+** — больше ничего ставить и настраивать не надо.
 
 Скрипт:
 
